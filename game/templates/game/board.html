@@ -590,6 +590,7 @@
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <button class="btn btn-gold" id="newPvPBtn">Pass & Play (PvP)</button>
                     <button class="btn btn-gold" id="newAIBtn">Play vs AI</button>
+                    <button class="btn" id="resignBtn" style="background: #333; color: #fff;">Resign</button>
                 </div>
             </div>
             <div class="card">
@@ -684,6 +685,7 @@
             const promoOverlay = document.getElementById('promoOverlay');
             const promoChoices = document.getElementById('promoChoices');
             const modeBadge = document.getElementById('modeBadge');
+            const resignBtn = document.getElementById('resignBtn');
 
             // Welcome and confirmation screen variables
             const welcomeOverlay = document.getElementById('welcomeOverlay');
@@ -932,12 +934,10 @@
 
                         // Check for game-ending conditions
                         if (data.game_status === 'checkmate') {
-                            clearInterval(timerInterval);
-                            handleGameOver('checkmate', turn);
+                            endGame('checkmate', turn);
                             return;
                         } else if (data.game_status === 'stalemate') {
-                            clearInterval(timerInterval);
-                            handleGameOver('stalemate', turn);
+                            endGame('stalemate', turn);
                             return;
                         } else if (data.game_status === 'check') {
                             showStatus(turn === 'white' ? 'White is in check!' : 'Black is in check!', true);
@@ -962,6 +962,7 @@
                AI move request
                ============================================================== */
             async function requestAIMove() {
+                if (gameOver) return;
                 showStatus('AI is thinking...', false);
                 try {
                     const data = await post('/api/ai-move/', {});
@@ -985,12 +986,10 @@
 
                         // Check for game-ending conditions
                         if (data.game_status === 'checkmate') {
-                            clearInterval(timerInterval);
-                            handleGameOver('checkmate', turn);
+                            endGame('checkmate', turn);
                             return;
                         } else if (data.game_status === 'stalemate') {
-                            clearInterval(timerInterval);
-                            handleGameOver('stalemate', turn);
+                            endGame('stalemate', turn);
                             return;
                         } else if (data.game_status === 'check') {
                             showStatus('You are in check!', true);
@@ -1073,28 +1072,33 @@
                 statusEl.className = 'status-bar' + (err ? ' error' : '');
             }
 
-            function handleGameOver(status, currentTurn) {
+            function endGame(reason, color) {
+                if (gameOver) return;
+
                 gameOver = true;
                 paused = true;
                 clearInterval(timerInterval);
 
                 let title, message;
-                if (status === 'checkmate') {
-                    // currentTurn is the side that has NO moves (is checkmated)
-                    const winner = currentTurn === 'white' ? 'Black' : 'White';
+
+                if (reason === 'checkmate') {
+                    const winner = color === 'white' ? 'Black' : 'White';
                     title = 'Checkmate!';
                     message = `${winner} wins!`;
-                } else if (status === 'stalemate') {
+                } else if (reason === 'stalemate') {
                     title = 'Stalemate!';
                     message = 'The game is a draw.';
+                } else if (reason === 'resign') {
+                    const winner = color === 'white' ? 'Black' : 'White';
+                    title = 'Resignation';
+                    message = `${color.charAt(0).toUpperCase() + color.slice(1)} resigned. ${winner} wins!`;
                 }
 
                 gameOverTitle.textContent = title;
                 gameOverMessage.textContent = message;
                 gameOverOverlay.classList.add('active');
-                showStatus(title + ' ' + message, false);
+                showStatus(title + ': ' + message, false);
             }
-
             /* ==========================================================
             CLOCKS & PAUSE
             ========================================================== */
@@ -1193,6 +1197,12 @@
 
             if (gameOverPvPBtn) gameOverPvPBtn.onclick = () => { gameOverOverlay.classList.remove('active'); startNewGame('pvp'); };
             if (gameOverAIBtn) gameOverAIBtn.onclick = () => { gameOverOverlay.classList.remove('active'); startNewGame('ai'); };
+
+            if (resignBtn) resignBtn.onclick = () => {
+                if (!gameOver && !paused) {
+                    endGame('resign', turn);
+                }
+            };
 
             async function startNewGame(mode) {
                 const d = await post('/api/new-game/', { mode: mode });
