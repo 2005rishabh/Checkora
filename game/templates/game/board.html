@@ -24,7 +24,7 @@
         (function () {
             const VALID_THEMES = ['classic', 'dark', 'green', 'blue'];
             let saved = 'classic';
-            try { saved = localStorage.getItem('chessBoardTheme') || 'classic'; } catch (e) {}
+            try { saved = localStorage.getItem('chessBoardTheme') || 'classic'; } catch (e) { }
             if (!VALID_THEMES.includes(saved)) saved = 'classic';
             document.documentElement.setAttribute('data-theme', saved);
         })();
@@ -33,49 +33,71 @@
 
 <body>
 
-<!-- ================= WELCOME ================= -->
-<div class="promo-overlay active" id="welcomeOverlay">
-    <div class="promo-dialog">
+<!-- ================= WELCOME OVERLAY ================= -->
+<div class="promo-overlay active" id="welcomeOverlay" style="background: var(--page-bg); z-index: 9999;">
+    <div class="promo-dialog" style="min-width: 320px; padding: 35px;">
+        <div class="promo-title" style="font-size: 1.6rem; margin-bottom: 10px;">Checkora</div>
 
-        <div class="promo-title">Checkora</div>
+        <p style="color:#aaa; margin-bottom: 25px;">Enter names and select a mode</p>
 
-        <input type="text" id="whiteNameInput" placeholder="White Player Name">
-        <input type="text" id="blackNameInput" placeholder="Black Player Name">
+        <div id="nameInputs" style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
+            <input id="whiteNameInput" placeholder="White Player Name">
+            <input id="blackNameInput" placeholder="Black Player Name">
+        </div>
 
-        <button id="welcomePvPBtn">Pass & Play (PvP)</button>
-        <button id="welcomeAIBtn">Play vs AI</button>
-
+        <div id="modeSelection" style="display:flex; flex-direction:column; gap:12px;">
+            <button id="welcomePvPBtn" class="btn btn-gold">Pass & Play (PvP)</button>
+            <button id="welcomeAIBtn" class="btn btn-gold">Play vs AI</button>
+        </div>
     </div>
 </div>
 
 <!-- ================= HEADER ================= -->
 <div class="header">
     <h1>
-        Checkora
-        <span class="badge" id="modeBadge">PVP</span>
+        Checkora <span class="badge" id="modeBadge">PVP</span>
     </h1>
 </div>
 
-<!-- ================= CAPTURED ================= -->
-<div class="card-title">Captured by <span id="whiteCapturedName">White</span></div>
-<div class="card-title">Captured by <span id="blackCapturedName">Black</span></div>
+<!-- ================= GAME LAYOUT ================= -->
+<div class="game-layout" style="visibility:hidden;">
 
-<!-- ================= TURN ================= -->
-<div class="turn-badge white" id="turnBadge">
-    <span id="turnBadgeText">White</span>'s Turn
+    <div class="panel">
+        <div class="card">
+            <div class="card-title">Captured by <span id="whiteCapturedName">White</span></div>
+            <div id="whiteCaptured"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Captured by <span id="blackCapturedName">Black</span></div>
+            <div id="blackCaptured"></div>
+        </div>
+    </div>
+
+    <div class="board-container">
+
+        <div class="turn-badge white" id="turnBadge"></div>
+
+        <div class="clocks">
+            <div id="whiteClock">
+                <span id="whiteNameLabel">WHITE</span>
+                <span id="whiteTime">10:00</span>
+            </div>
+
+            <div id="blackClock">
+                <span id="blackNameLabel">BLACK</span>
+                <span id="blackTime">10:00</span>
+            </div>
+        </div>
+
+        <div id="board" class="chessboard"></div>
+
+        <div class="status-bar" id="statusBar"></div>
+    </div>
+
 </div>
 
-<!-- ================= CLOCKS ================= -->
-<div id="whiteClock"><span id="whiteNameLabel">WHITE</span></div>
-<div id="blackClock"><span id="blackNameLabel">BLACK</span></div>
-
-<!-- ================= CONTROLS ================= -->
-<button id="pauseBtn">Pause</button>
-
-<!-- ⚠️ FIXED: ONLY ONE resign button -->
-<button id="resignBtn" style="background:#333;color:#fff;">Resign</button>
-
-<!-- ================= GAME SCRIPT ================= -->
+<!-- ================= SCRIPT ================= -->
 <script>
 (() => {
 'use strict';
@@ -83,28 +105,42 @@
 /* ================= STATE ================= */
 let board = [];
 let turn = 'white';
+let gameMode = 'pvp';
+let playerColor = 'white';
 
 let whiteName = 'White';
 let blackName = 'Black';
 
 /* ================= HELPERS ================= */
-const cap = n => n ? n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() : '';
+const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
 
-/* ================= TURN UI ================= */
+/* ================= TURN FIX (IMPORTANT FIX HERE) ================= */
 function updateTurn() {
-    const turnName = turn === 'white' ? whiteName : blackName;
+    const badge = document.getElementById('turnBadge');
 
-    document.getElementById('turnBadgeText').textContent = cap(turnName);
-    document.getElementById('turnBadge').textContent = `${cap(turnName)}'s Turn`;
+    const whiteLabel = document.getElementById('whiteNameLabel')?.textContent || 'White';
+    const blackLabel = document.getElementById('blackNameLabel')?.textContent || 'Black';
+
+    badge.className = 'turn-badge ' + turn;
+
+    let text;
+
+    if (gameMode === 'ai') {
+        text = (turn === playerColor) ? 'Your Turn' : 'AI is thinking...';
+    } else {
+        text = (turn === 'white' ? whiteLabel : blackLabel) + "'s Turn";
+    }
+
+    badge.textContent = text;
 }
 
-/* ================= NEW GAME ================= */
+/* ================= START GAME ================= */
 async function startNewGame(mode) {
 
     whiteName = document.getElementById('whiteNameInput').value.trim() || 'White';
     blackName = document.getElementById('blackNameInput').value.trim() || 'Black';
 
-    const data = await fetch('/api/new-game/', {
+    const res = await fetch('/api/new-game/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -112,10 +148,13 @@ async function startNewGame(mode) {
             white_name: whiteName,
             black_name: blackName
         })
-    }).then(r => r.json());
+    });
+
+    const data = await res.json();
 
     board = data.board;
     turn = data.current_turn;
+    gameMode = mode;
 
     document.getElementById('whiteNameLabel').textContent = whiteName.toUpperCase();
     document.getElementById('blackNameLabel').textContent = blackName.toUpperCase();
@@ -123,7 +162,8 @@ async function startNewGame(mode) {
     document.getElementById('whiteCapturedName').textContent = cap(whiteName);
     document.getElementById('blackCapturedName').textContent = cap(blackName);
 
-    document.getElementById('modeBadge').textContent = mode === 'ai' ? 'VS AI' : 'PVP';
+    document.querySelector('.game-layout').style.visibility = 'visible';
+    document.getElementById('welcomeOverlay').classList.remove('active');
 
     updateTurn();
 }
