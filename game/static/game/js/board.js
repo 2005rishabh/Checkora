@@ -133,6 +133,8 @@
             let gameOver = false;
             let aiThinking = false;
 
+            let pgnCopyTimeout = null;
+            let fenCopyTimeout = null;
             /* ==========================================================
             CSRF & API HELPERS
             ========================================================== */
@@ -1091,6 +1093,9 @@
 
             async function startNewGame(mode, pColor = 'white', difficulty = 'medium') {
 
+                clearTimeout(pgnCopyTimeout);
+                clearTimeout(fenCopyTimeout);
+
                 if (copyPgnBtn) {
                     copyPgnBtn.textContent = 'Export as PGN';
                 }
@@ -1098,7 +1103,6 @@
                 if (copyFenBtn) {
                     copyFenBtn.textContent = 'Copy FEN';
                 }
-
                 // Clear celebration effects
                 const overlay = document.getElementById('gameOverOverlay');
                 overlay.classList.remove('game-over-celebration');
@@ -1271,12 +1275,14 @@
     if (data.pgn) {
         navigator.clipboard.writeText(data.pgn);
 
-        const oldText = copyPgnBtn.textContent;
+        
 
         copyPgnBtn.textContent = 'Copied!';
 
-        setTimeout(() => {
-            copyPgnBtn.textContent = oldText;
+        clearTimeout(pgnCopyTimeout);
+
+        pgnCopyTimeout = setTimeout(() => {
+            copyPgnBtn.textContent = 'Export as PGN';
         }, 2000);
     }
 };
@@ -1285,9 +1291,13 @@
                 const data = await get('/api/state/');
                 if (data.fen) {
                     navigator.clipboard.writeText(data.fen);
-                    const oldText = copyFenBtn.textContent;
+                    
                     copyFenBtn.textContent = 'Copied!';
-                    setTimeout(() => copyFenBtn.textContent = oldText, 2000);
+                    clearTimeout(fenCopyTimeout);
+
+                    fenCopyTimeout = setTimeout(() => {
+                        copyFenBtn.textContent = 'Copy FEN';
+                    }, 2000);
                 }
             };
 
