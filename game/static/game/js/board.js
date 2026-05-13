@@ -45,6 +45,30 @@
             let flipped = false;
             let autoFlip = false;
 
+            function validatePlayerNames() {
+                const wNameInput = document.getElementById('whiteNameInput');
+                const bNameInput = document.getElementById('blackNameInput');
+                const errorDiv = document.getElementById('nameError');
+            
+                const wName = wNameInput?.value.trim();
+                const bName = bNameInput?.value.trim();
+            
+                if (!wName || !bName) {
+                    if (errorDiv) {
+                        errorDiv.style.display = 'block';
+                        errorDiv.textContent = '⚠️ Please enter both player names';
+                    }
+                    if (!wName && wNameInput) wNameInput.classList.add('input-error');
+                    if (!bName && bNameInput) bNameInput.classList.add('input-error');
+                    return false;
+                }
+            
+                if (errorDiv) errorDiv.style.display = 'none';
+                if (wNameInput) wNameInput.classList.remove('input-error');
+                if (bNameInput) bNameInput.classList.remove('input-error');
+                return true;
+            }
+
             /* ==========================================================
             DOM REFERENCES
             ========================================================== */
@@ -62,6 +86,7 @@
             const autoFlipBtn = document.getElementById('autoFlipBtn');
             const flipControls = document.getElementById('flipControls');
             const copyFenBtn = document.getElementById('copyFenBtn');
+            const copyPgnBtn = document.getElementById('copyPgnBtn');
 
             const welcomeOverlay = document.getElementById('welcomeOverlay');
             const welcomeResumeBtn = document.getElementById('welcomeResumeBtn');
@@ -108,6 +133,8 @@
             let gameOver = false;
             let aiThinking = false;
 
+            let pgnCopyTimeout = null;
+            let fenCopyTimeout = null;
             /* ==========================================================
             CSRF & API HELPERS
             ========================================================== */
@@ -150,6 +177,72 @@
                 return boardEl.children[vr * 8 + vc];
             };
 
+            function getSquareSize() {
+                const s = boardEl.querySelector('.square');
+                return s ? s.getBoundingClientRect().width : 60;
+            }
+
+            async function animateMove(fr, fc, tr, tc) {
+                if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+                const animations = [];
+                const size = getSquareSize();
+                const mult = flipped ? -1 : 1;
+
+                function createAnim(p, dRow, dCol) {
+                    return new Promise(resolve => {
+                        p.style.transition = 'transform 0.25s ease-in-out, opacity 0.2s ease';
+                        p.style.transform = `translate(${dCol * size * mult}px, ${dRow * size * mult}px)`;
+                        p.classList.add('moving');
+
+                        const onEnd = () => {
+                            p.removeEventListener('transitionend', onEnd);
+                            p.classList.remove('moving');
+                            p.style.transform = 'none';
+                            p.style.transition = '';
+                            resolve();
+                        };
+                        p.addEventListener('transitionend', onEnd);
+                        setTimeout(onEnd, 300);
+                    });
+                }
+
+                // 1. Moving piece
+                const piece = sq(fr, fc).querySelector('.piece');
+                if (piece) {
+                    animations.push(createAnim(piece, tr - fr, tc - fc));
+                    
+                    // 2. Castling detection
+                    const pType = board[fr][fc];
+                    if (pType && pType.toLowerCase() === 'k' && Math.abs(tc - fc) === 2) {
+                        const isShort = tc > fc;
+                        const rookFr = fr;
+                        const rookFc = isShort ? 7 : 0;
+                        const rookTr = fr;
+                        const rookTc = isShort ? 5 : 3;
+                        const rook = sq(rookFr, rookFc).querySelector('.piece');
+                        if (rook) {
+                            animations.push(createAnim(rook, rookTr - rookFr, rookTc - rookFc));
+                        }
+                    }
+                }
+
+                // 3. Capture detection (including En Passant)
+                let capturedSq = sq(tr, tc);
+                // En Passant: capture pawn is not on target square
+                const isEnPassant = piece && piece.src.includes('p.png') && fc !== tc && !board[tr][tc];
+                if (isEnPassant) {
+                    capturedSq = sq(fr, tc);
+                }
+                
+                const targetPiece = capturedSq.querySelector('.piece');
+                if (targetPiece) {
+                    targetPiece.classList.add('captured');
+                }
+
+                await Promise.all(animations);
+            }
+
             function parseBoard(s) {
                 if (!s || typeof s !== 'string') return s;
                 const b = [];
@@ -163,7 +256,25 @@
                 }
                 return b;
             }
+            const whiteNameInput = document.getElementById('whiteNameInput');
+            const blackNameInput = document.getElementById('blackNameInput');
 
+            if (whiteNameInput) {
+                whiteNameInput.addEventListener('input', () => {
+                    whiteNameInput.classList.remove('input-error');
+                    if (whiteNameInput.value.trim() && blackNameInput?.value.trim()) {
+                        document.getElementById('nameError').style.display = 'none';
+                    }
+                });
+            }
+            if (blackNameInput) {
+                blackNameInput.addEventListener('input', () => {
+                    blackNameInput.classList.remove('input-error');
+                    if (blackNameInput.value.trim() && whiteNameInput?.value.trim()) {
+                        document.getElementById('nameError').style.display = 'none';
+                    }
+                });
+            }
             /* ==========================================================
             LOAD GAME STATE
             ========================================================== */
@@ -245,9 +356,16 @@
                 let wName = data.white_name || 'White';
                 let bName = data.black_name || 'Black';
                 
-                if (gameMode === 'ai') {
-                    if (playerColor === 'white') bName = bName + ' (AI)';
-                    else wName = wName + ' (AI)';
+                if (gameMode === 'ai'){
+                    // Fixing the naming system
+                    let player_name = data.white_name;
+                    if(playerColor === 'white'){
+                        wName = player_name;
+                        bName = 'AI (Black)';
+                    }else{
+                        bName = player_name;
+                        wName = 'AI (White)';
+                    }
                 }
 
                 if (whiteNameLabel) whiteNameLabel.textContent = wName.toUpperCase();
@@ -480,7 +598,7 @@
                 if (!pendingPromo) return;
                 const { fr, fc, tr, tc } = pendingPromo;
                 hidePromoModal();
-                await executeMove(fr, fc, tr, tc, choice);
+                await executeMove(fr, fc, tr, tc, choice, true);
             }
 
             async function tryMove(fr, fc, tr, tc) {
@@ -489,6 +607,7 @@
                 if (!p || pColor(p) !== turn) return;
 
                 if (isPromotionMove(fr, fc, tr)) {
+                    await animateMove(fr, fc, tr, tc);
                     pendingPromo = { fr, fc, tr, tc };
                     const color = pColor(p);
                     showPromoModal(color);
@@ -497,7 +616,7 @@
                 await executeMove(fr, fc, tr, tc, null);
             }
 
-            async function executeMove(fr, fc, tr, tc, promotionPiece) {
+            async function executeMove(fr, fc, tr, tc, promotionPiece, skipAnimation = false) {
                 try {
                     const body = {
                         from_row: fr, from_col: fc,
@@ -506,27 +625,28 @@
                     if (promotionPiece) body.promotion_piece = promotionPiece;
 
                     const data = await post('/api/move/', body);
-                    if (data.valid) {
-                        board = parseBoard(data.board);
-                        turn = data.current_turn;
-                        lastMove = { from: [fr, fc], to: [tr, tc] };
-
-                        if (gameMode === 'pvp' && autoFlip) {
-                            flipped = (turn === 'black');
-                            buildBoard();
-                        }
-                        whiteTime = data.white_time;
-                        blackTime = data.black_time;
-
-                        selected = null;
-                        hints = [];
-                        updatePlayerNames(data);
-                        updateTurn();
-                        updateMoves(data.move_history);
-                        updateCaptured(data.captured_pieces);
-                        syncPieces();
-                        renderClocks();
-                        startTimer();
+                        if (data.valid) {
+                            if (!skipAnimation) await animateMove(fr, fc, tr, tc);
+                            board = parseBoard(data.board);
+                            turn = data.current_turn;
+                            lastMove = { from: [fr, fc], to: [tr, tc] };
+    
+                            if (gameMode === 'pvp' && autoFlip) {
+                                flipped = (turn === 'black');
+                                buildBoard();
+                            }
+                            whiteTime = data.white_time;
+                            blackTime = data.black_time;
+    
+                            selected = null;
+                            hints = [];
+                            updatePlayerNames(data);
+                            updateTurn();
+                            updateMoves(data.move_history);
+                            updateCaptured(data.captured_pieces);
+                            syncPieces();
+                            renderClocks();
+                            startTimer();
 
                         if (handleGameStatus(data.game_status, data.draw_reason)) {
                             // Game-ending status has been handled.
@@ -556,23 +676,24 @@
                 showStatus('AI is thinking...', false);
                 try {
                     const data = await post('/api/ai-move/', {});
-                    if (data.valid) {
-                        const mv = data.ai_move;
-                        board = parseBoard(data.board);
-                        turn = data.current_turn;
-                        lastMove = { from: [mv.from_row, mv.from_col], to: [mv.to_row, mv.to_col] };
-                        whiteTime = data.white_time;
-                        blackTime = data.black_time;
-
-                        selected = null;
-                        hints = [];
-                        updatePlayerNames(data);
-                        updateTurn();
-                        updateMoves(data.move_history);
-                        updateCaptured(data.captured_pieces);
-                        syncPieces();
-                        renderClocks();
-                        startTimer();
+                        if (data.valid) {
+                            const mv = data.ai_move;
+                            await animateMove(mv.from_row, mv.from_col, mv.to_row, mv.to_col);
+                            board = parseBoard(data.board);
+                            turn = data.current_turn;
+                            lastMove = { from: [mv.from_row, mv.from_col], to: [mv.to_row, mv.to_col] };
+                            whiteTime = data.white_time;
+                            blackTime = data.black_time;
+    
+                            selected = null;
+                            hints = [];
+                            updatePlayerNames(data);
+                            updateTurn();
+                            updateMoves(data.move_history);
+                            updateCaptured(data.captured_pieces);
+                            syncPieces();
+                            renderClocks();
+                            startTimer();
 
                         if (handleGameStatus(data.game_status, data.draw_reason)) {
                             // Game-ending status has been handled.
@@ -882,6 +1003,8 @@
 
             function updatePauseUI() {
                 pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+                pauseBtn.classList.toggle('paused', paused);
+                boardEl.classList.toggle('paused', paused);
             }
 
             function startTimer() {
@@ -976,6 +1099,17 @@
             }
 
             async function startNewGame(mode, pColor = 'white', difficulty = 'medium') {
+
+                clearTimeout(pgnCopyTimeout);
+                clearTimeout(fenCopyTimeout);
+
+                if (copyPgnBtn) {
+                    copyPgnBtn.textContent = 'Export as PGN';
+                }
+
+                if (copyFenBtn) {
+                    copyFenBtn.textContent = 'Copy FEN';
+                }
                 // Clear celebration effects
                 const overlay = document.getElementById('gameOverOverlay');
                 overlay.classList.remove('game-over-celebration');
@@ -1024,26 +1158,69 @@
                 }
             }
 
+            
+
             /* ==========================================================
             EVENT LISTENERS
             ========================================================== */
             let selectedPveColor = 'white';
 
             if (welcomePvPBtn) welcomePvPBtn.onclick = () => {
+                if (!validatePlayerNames()) return;
                 welcomeOverlay.classList.remove('active');
                 gameLayout.style.visibility = 'visible';
                 startNewGame('pvp');
             };
 
             if (welcomeAIBtn) welcomeAIBtn.onclick = () => {
-                nameInputs.style.display = 'none';
+                const whiteInput = document.getElementById('whiteNameInput');
+                const blackInput = document.getElementById('blackNameInput');
+                const errorDiv = document.getElementById('nameError');
+                
+                // Show ONLY white input for AI mode
+                if (whiteInput) {
+                    whiteInput.style.display = 'block';
+                    whiteInput.placeholder = 'Your Name';
+                    whiteInput.value = '';
+                    whiteInput.classList.remove('input-error');
+                }
+                if (blackInput) {
+                    blackInput.style.display = 'none';
+                    blackInput.value = 'AI';
+                    blackInput.classList.remove('input-error');
+                }
+                
+                // Hide error
+                if (errorDiv) errorDiv.style.display = 'none';
+                
+                nameInputs.style.display = 'flex';
                 modeSelection.style.display = 'none';
                 pveOptions.style.display = 'flex';
             };
 
             if (backToModes) backToModes.onclick = () => {
+                const whiteInput = document.getElementById('whiteNameInput');
+                const blackInput = document.getElementById('blackNameInput');
+                const errorDiv = document.getElementById('nameError');
+                
                 pveOptions.style.display = 'none';
                 modeSelection.style.display = 'flex';
+                
+                // Reset both inputs to visible for PvP
+                if (whiteInput) {
+                    whiteInput.style.display = 'block';
+                    whiteInput.placeholder = 'White Player Name';
+                    whiteInput.classList.remove('input-error');
+                }
+                if (blackInput) {
+                    blackInput.style.display = 'block';
+                    blackInput.placeholder = 'Black Player Name';
+                    blackInput.classList.remove('input-error');
+                }
+                
+                // Hide error
+                if (errorDiv) errorDiv.style.display = 'none';
+                
                 nameInputs.style.display = 'flex';
             };
 
@@ -1061,6 +1238,29 @@
             });
 
             if (startAIBtn) startAIBtn.onclick = () => {
+                const wNameInput = document.getElementById('whiteNameInput');
+                const errorDiv = document.getElementById('nameError');
+                
+                const playerName = wNameInput?.value.trim();
+                
+                // Validate: AI mode only needs ONE name
+                if (!playerName) {
+                    if (errorDiv) {
+                        errorDiv.style.display = 'block';
+                        errorDiv.textContent = '⚠️ Please enter your name';
+                    }
+                    if (wNameInput) {
+                        wNameInput.classList.add('input-error');
+                    }
+                    return;
+                }
+                
+                // Clear error
+                if (errorDiv) errorDiv.style.display = 'none';
+                if (wNameInput) {
+                    wNameInput.classList.remove('input-error');
+                }
+                
                 const diff = document.getElementById('welcomeDifficultySelect').value;
                 welcomeOverlay.classList.remove('active');
                 gameLayout.style.visibility = 'visible';
@@ -1076,14 +1276,35 @@
                     buildBoard();
                 }
             };
+            if (copyPgnBtn) copyPgnBtn.onclick = async () => {
+    const data = await get('/api/state/');
+
+    if (data.pgn) {
+        navigator.clipboard.writeText(data.pgn);
+
+        
+
+        copyPgnBtn.textContent = 'Copied!';
+
+        clearTimeout(pgnCopyTimeout);
+
+        pgnCopyTimeout = setTimeout(() => {
+            copyPgnBtn.textContent = 'Export as PGN';
+        }, 2000);
+    }
+};
 
             if (copyFenBtn) copyFenBtn.onclick = async () => {
                 const data = await get('/api/state/');
                 if (data.fen) {
                     navigator.clipboard.writeText(data.fen);
-                    const oldText = copyFenBtn.textContent;
+                    
                     copyFenBtn.textContent = 'Copied!';
-                    setTimeout(() => copyFenBtn.textContent = oldText, 2000);
+                    clearTimeout(fenCopyTimeout);
+
+                    fenCopyTimeout = setTimeout(() => {
+                        copyFenBtn.textContent = 'Copy FEN';
+                    }, 2000);
                 }
             };
 
@@ -1219,9 +1440,14 @@
                     e.returnValue = '';
                 }
             });
+            
 
-            /* ==========================================================
-            INIT
-            ========================================================== */
-            loadGame();
-        })();
+          if (typeof module !== "undefined" && module.exports) {
+          module.exports = { pColor, getSquareLabel, formatTime };
+        } else {
+          loadGame();
+        }
+
+})();
+
+

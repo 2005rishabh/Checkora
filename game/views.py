@@ -3,7 +3,7 @@
 import json
 import time
 import hashlib
-import random
+import secrets
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.conf import settings
 from django.http import JsonResponse
@@ -11,7 +11,8 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, logout
 from django.contrib.auth.models import User
 from django.contrib.auth.forms import AuthenticationForm
-from django.core.mail import send_mail
+from smtplib import SMTPException
+from django.core.mail import BadHeaderError, send_mail
 from django.contrib import messages
 from django import forms
 from .forms import CustomUserCreationForm
@@ -20,6 +21,11 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .engine import ChessGame
 from .models import GameResult
+
+
+def landing(request):
+    """Render the landing page introduction to Checkora."""
+    return render(request, 'game/landing.html')
 
 
 @ensure_csrf_cookie
@@ -66,7 +72,7 @@ def make_move(request):
             winner = 'black' if game.current_turn == 'white' else 'white'
             record_game_result(game.mode, winner, 'checkmate')
         elif game_status in ('stalemate', 'draw'):
-            record_game_result(game.mode, 'draw', 'stalemate')
+            record_game_result(game.mode, 'draw', game.draw_reason or 'stalemate')
 
     return JsonResponse({
         'valid': success,
@@ -81,6 +87,7 @@ def make_move(request):
         'game_status': game_status,
         'draw_reason': game.draw_reason,
         'fen': game.generate_fen_key(),
+        'pgn': game.generate_pgn(),
         'white_name': request.session.get('white_name', 'White'),
         'black_name': request.session.get('black_name', 'Black'),
     })
@@ -145,6 +152,7 @@ def new_game(request):
         'black_name': request.session['black_name'],
         'difficulty': difficulty,
         'fen': game.generate_fen_key(),
+        'pgn': game.generate_pgn(),
         'game_status': game.game_status,
         'draw_reason': game.draw_reason,
     })
@@ -205,6 +213,7 @@ def get_state(request):
         'white_name': request.session.get('white_name', 'White'),
         'black_name': request.session.get('black_name', 'Black'),
         'fen': game.generate_fen_key(),
+        'pgn': game.generate_pgn(),
         'game_status': game.game_status,
         'draw_reason': game.draw_reason,
     })
@@ -293,6 +302,7 @@ def ai_move(request):
         'game_status': game_status,
         'draw_reason': game.draw_reason,
         'fen': game.generate_fen_key(),
+        'pgn': game.generate_pgn(),
         'white_name': request.session.get('white_name', 'White'),
         'black_name': request.session.get('black_name', 'Black'),
     })
@@ -367,7 +377,7 @@ def register_view(request):
             user.save()
 
             # Generate 6-digit OTP
-            otp = str(random.randint(100000, 999999))
+            otp = str(secrets.randbelow(900000) + 100000)
             request.session['registration_user_id'] = user.id
             # Hash OTP with SECRET_KEY as salt to prevent reading from signed cookies
             otp_hash = hashlib.sha256(f"{otp}:{settings.SECRET_KEY}".encode()).hexdigest()
@@ -415,13 +425,13 @@ def register_view(request):
                     html_message=html_message
                 )
                 return redirect('verify_otp')
-            except Exception as e:
+            except (SMTPException, BadHeaderError, OSError):
                 # If email fails, delete the user so they can try again
                 user.delete()
                 request.session.pop('registration_user_id', None)
                 request.session.pop('registration_otp_hash', None)
                 err_msg = (
-                    f'Failed to send OTP email: {str(e)}. '
+                    'Failed to send OTP email. '
                     'Please check your email address and try again.'
                 )
                 messages.error(request, err_msg)
@@ -469,15 +479,7 @@ def verify_otp(request):
         else:
             messages.error(request, 'Invalid OTP. Please try again.')
 
-    uses_console_email = (
-        settings.EMAIL_BACKEND
-        == 'django.core.mail.backends.console.EmailBackend'
-    )
-    return render(
-        request,
-        'game/verify_otp.html',
-        {'uses_console_email': uses_console_email},
-    )
+    return render(request, 'game/verify_otp.html')
 
 
 def login_view(request):
@@ -501,9 +503,10 @@ def login_view(request):
 def rules(request):
     return render(request, 'game/rules.html')
 
+@require_POST
 def logout_view(request):
     logout(request)
-    return redirect('index')
+    return redirect('landing')
 
 
 def stats_view(request):
